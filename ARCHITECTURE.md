@@ -81,59 +81,36 @@ The proposed batch-first architecture processes mobile events through a simplifi
 
 ```mermaid
 graph TB
-    subgraph "Mobile Layer"
-        SDK[BeReal iOS SDK<br/>Swift + SQLite]
-        iOS[iOS App]
-        Android[Android App<br/>Future]
-    end
-    
-    subgraph "Ingestion Layer"
-        PS[Cloud Pub/Sub<br/>100 partitions]
-        PSS[Pub/Sub to GCS<br/>Subscription]
-        CS[Cloud Storage<br/>Hourly Partitions]
-        GA4[GA4 BigQuery Link<br/>Historical Data]
-    end
-    
-    subgraph "Processing Layer"
-        DP[Dataproc<br/>Primary Processing]
-        DPS[Dataproc Streaming<br/>Optional Real-time]
-        WF[Cloud Workflows<br/>Simple Orchestration]
-        COMP[Cloud Composer<br/>Complex Orchestration]
-    end
-    
-    subgraph "Storage Layer - Hybrid"
-        ICE[Iceberg Tables<br/>Staging/Schema Evolution]
-        BQ[BigQuery Native<br/>Kimball DWH]
-        SP[Cloud Spanner<br/>Optional - User Profiles]
-        BT[BigTable<br/>ML Features]
-        CH[ClickHouse<br/>Optional - Internal Analytics]
-        FS[Vertex AI<br/>Feature Store]
-    end
-    
-    subgraph "Transformation Layer"
-        DBTC[DBT Core<br/>Open Source]
-        DBTSL[DBT Semantic<br/>Layer]
-        DBTD[DBT Docs<br/>Cloud Run]
-        DC[Data Catalog<br/>Metadata]
-    end
-    
-    subgraph "ML Platforms"
-        DB[Databricks<br/>Optional - Dev Only]
-        VAI[Vertex AI<br/>Model Training]
-        VAR[Model Registry]
-        VAE[Vertex AI<br/>Endpoints]
-    end
-    
-    subgraph "Analytics & Serving"
-        SUP[Apache Superset<br/>Open Source BI]
-        API[Analytics API<br/>< 10ms SLA]
-        REC[Recommendation API<br/>< 50ms SLA]
-    end
-    
-    subgraph "Observability"
-        RD[re_data<br/>Open Source]
-        MC[Monte Carlo<br/>Future Option]
-    end
+    SDK[BeReal iOS SDK]
+    iOS[iOS App]
+    Android[Android App Future]
+    PS[Cloud Pub/Sub]
+    PSS[Pub/Sub to GCS]
+    CS[Cloud Storage]
+    GA4[GA4 BigQuery Link]
+    DP[Dataproc Primary]
+    DPS[Dataproc Streaming]
+    WF[Cloud Workflows]
+    COMP[Cloud Composer]
+    ICE[Iceberg Tables]
+    BQ[BigQuery Native]
+    SP[Cloud Spanner Optional]
+    BT[BigTable]
+    CH[ClickHouse Optional]
+    FS[Vertex AI Feature Store]
+    DBTC[DBT Core]
+    DBTSL[DBT Semantic Layer]
+    DBTD[DBT Docs]
+    DC[Data Catalog]
+    DB[Databricks Optional]
+    VAI[Vertex AI Training]
+    VAR[Model Registry]
+    VAE[Vertex AI Endpoints]
+    SUP[Apache Superset]
+    API[Analytics API]
+    REC[Recommendation API]
+    RD[re_data]
+    MC[Monte Carlo Optional]
     
     iOS --> SDK
     Android -.-> SDK
@@ -346,17 +323,17 @@ OPTIONS (
 ```mermaid
 graph TB
     subgraph "Fact Tables"
-        F1[fct_user_engagement<br/>Grain: Event-level]
-        F2[fct_user_sessions<br/>Grain: Session-level]
-        F3[fct_recommendations<br/>Grain: User-Item-Timestamp]
+        F1[fct_user_engagement - Grain: Event-level]
+        F2[fct_user_sessions - Grain: Session-level]
+        F3[fct_recommendations - Grain: User-Item-Timestamp]
     end
     
     subgraph "Dimension Tables"
-        D1[dim_users<br/>Type 2 SCD]
-        D2[dim_content<br/>Type 1 SCD]
-        D3[dim_date<br/>Role-playing]
-        D4[dim_location<br/>Hierarchical]
-        D5[dim_device<br/>Type 1 SCD]
+        D1[dim_users - Type 2 SCD]
+        D2[dim_content - Type 1 SCD]
+        D3[dim_date - Role-playing]
+        D4[dim_location - Hierarchical]
+        D5[dim_device - Type 1 SCD]
     end
     
     subgraph "Bridge Tables"
@@ -624,18 +601,18 @@ def tag_bigquery_columns():
 ```mermaid
 graph LR
     subgraph "Development"
-        DEV[Developer<br/>VS Code + DBT]
+        DEV[Developer - VS Code + DBT]
         GIT[GitLab/GitHub]
     end
     
     subgraph "Orchestration"
-        CC[Cloud Composer<br/>Apache Airflow]
-        DBT[DBT Core<br/>Container]
+        CC[Cloud Composer - Apache Airflow]
+        DBT[DBT Core - Container]
     end
     
     subgraph "Execution"
-        BQ[BigQuery<br/>Compute]
-        DOCS[DBT Docs<br/>Cloud Run]
+        BQ[BigQuery - Compute]
+        DOCS[DBT Docs - Cloud Run]
     end
     
     subgraph "Monitoring"
@@ -834,8 +811,8 @@ graph TB
     end
     
     subgraph "Optional Dev/Lab Environment"
-        DBW[Databricks Workspace<br/>Development Only]
-        DBE[Experimentation<br/>Not for Production]
+        DBW[Databricks Workspace - Development Only]
+        DBE[Experimentation - Not for Production]
     end
     
     subgraph "Serving Layer"
@@ -977,12 +954,12 @@ graph LR
     end
     
     subgraph "Migration Path"
-        LINK[GA4 BigQuery Link<br/>Native Connector]
-        EXPORT[Daily Export<br/>Raw Events]
+        LINK[GA4 BigQuery Link - Native Connector]
+        EXPORT[Daily Export - Raw Events]
     end
     
     subgraph "Transformation"
-        RAW[GA4 Raw Tables<br/>events_*]
+        RAW[GA4 Raw Tables - events_*]
         DBT[DBT Normalization]
         UNIFIED[Unified Schema]
     end
@@ -1395,10 +1372,10 @@ WHERE user_id = ? AND event_date >= today() - 7;
 **Recommended Core Architecture:**
 ```mermaid
 graph LR
-    CS[Cloud Storage<br/>Raw Data] --> DP[Dataproc<br/>Primary Processing]
-    CS --> DF[Dataflow<br/>Simple ETL Only]
-    DP --> ICE[Iceberg<br/>Complex Transforms]
-    DF --> BQ[BigQuery<br/>Direct Loads]
+    CS[Cloud Storage - Raw Data] --> DP[Dataproc - Primary Processing]
+    CS --> DF[Dataflow - Simple ETL Only]
+    DP --> ICE[Iceberg - Complex Transforms]
+    DF --> BQ[BigQuery - Direct Loads]
     ICE --> BQ
 ```
 
@@ -1419,23 +1396,23 @@ Use Dataflow for:
 ```mermaid
 graph TB
     subgraph "Orchestration Options"
-        CC[Cloud Composer<br/>$300-500/month]
-        MP[Managed Airflow<br/>on GKE]
-        CR[Cloud Run Jobs<br/>+ Cloud Scheduler]
-        WF[Workflows<br/>Serverless]
+        CC[Cloud Composer - $300-500/month]
+        MP[Managed Airflow on GKE]
+        CR[Cloud Run Jobs + Cloud Scheduler]
+        WF[Workflows - Serverless]
     end
     
     subgraph "Workloads to Orchestrate"
-        DBT[DBT Transformations<br/>Daily/Hourly]
-        DP[Dataproc Jobs<br/>Heavy Processing]
-        DF[Dataflow Jobs<br/>ETL]
-        ML[ML Training<br/>Weekly]
-        DQ[Data Quality<br/>Continuous]
+        DBT[DBT Transformations - Daily/Hourly]
+        DP[Dataproc Jobs - Heavy Processing]
+        DF[Dataflow Jobs - ETL]
+        ML[ML Training - Weekly]
+        DQ[Data Quality - Continuous]
     end
     
     subgraph "Decision Matrix"
-        CORE[Core Solution:<br/>Cloud Scheduler + Workflows]
-        SCALE[At Scale:<br/>Cloud Composer]
+        CORE[Core Solution: Cloud Scheduler + Workflows]
+        SCALE[At Scale: Cloud Composer]
     end
     
     DBT --> CORE
@@ -1707,24 +1684,24 @@ graph TB
     end
     
     subgraph "Load Balancer"
-        ING[Cloud Load Balancer<br/>HTTPS/SSL]
+        ING[Cloud Load Balancer - HTTPS/SSL]
     end
     
     subgraph "GKE Cluster"
-        WEB[Superset Web<br/>3 replicas]
-        WORK[Celery Workers<br/>5 replicas]
-        BEAT[Celery Beat<br/>1 replica]
+        WEB[Superset Web - 3 replicas]
+        WORK[Celery Workers - 5 replicas]
+        BEAT[Celery Beat - 1 replica]
     end
     
     subgraph "Storage"
-        PG[Cloud SQL<br/>PostgreSQL]
-        REDIS[Memorystore<br/>Redis]
-        GCS[Cloud Storage<br/>Assets]
+        PG[Cloud SQL - PostgreSQL]
+        REDIS[Memorystore - Redis]
+        GCS[Cloud Storage - Assets]
     end
     
     subgraph "Data Sources"
-        BQ[BigQuery<br/>DWH]
-        SP[Spanner<br/>Optional]
+        BQ[BigQuery - DWH]
+        SP[Spanner - Optional]
     end
     
     AN --> ING

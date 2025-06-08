@@ -10,28 +10,28 @@ The solution provides a coherent flow from mobile SDK through to analytics and M
 
 ```mermaid
 graph LR
-    subgraph "1. Collection"
+    subgraph "1 Collection"
         SDK[Mobile SDK - Batching Logic]
     end
     
-    subgraph "2. Ingestion"
+    subgraph "2 Ingestion"
         PS[Pub/Sub - Message Queue]
         CS[Cloud Storage - Raw Landing]
     end
     
-    subgraph "3. Storage"
+    subgraph "3 Storage"
         ICE[Iceberg - Staging Layer]
         BQ[BigQuery - Analytics DWH]
         SP[Spanner - Transactional]
     end
     
-    subgraph "4. Processing"
+    subgraph "4 Processing"
         DF[Dataflow - ETL]
         DBT[DBT - Transformations]
         DB[Databricks - ML Features]
     end
     
-    subgraph "5. Exposure"
+    subgraph "5 Exposure"
         LOOK[Looker - BI]
         API[APIs - Real-time]
         ML[ML Serving - Recommendations]
@@ -3235,9 +3235,9 @@ The hybrid storage strategy leverages the best of each technology:
 - **Apache Iceberg** for staging provides schema flexibility and multi-engine access
 - **Native BigQuery** tables deliver 38-81x faster query performance for production analytics
 - **Cloud Spanner** ensures transactional consistency with <5ms latency for user data
-- **ClickHouse** provides cost-effective pre-aggregated analytics
+- **ClickHouse** provides cost-effective pre-aggregated analytics when developing custom dashboards
 
-The dual ML platform approach (Databricks for complex feature engineering, Vertex AI for production serving) optimizes for both data scientist productivity and operational efficiency, while the micro-batching strategy balances real-time requirements with batch processing economics.
+The dual ML platform approach (optional Databricks for complex feature engineering, Vertex AI for production serving) optimizes for both data scientist productivity and operational efficiency, while the micro-batching strategy balances real-time requirements with batch processing economics.
 
 Key achievements:
 - **Coherent Architecture**: Clear data flow from mobile SDK → ingestion → storage → processing → exposure
@@ -3246,5 +3246,3 @@ Key achievements:
 - **Cost Efficiency**: 29% cost reduction while adding real-time capabilities
 - **Scalability**: Processes 10TB daily with elastic scaling to 100TB
 - **Data Governance**: Kimball methodology ensures consistent, auditable analytics
-
-This modular, best-of-breed architecture positions BeReal to evolve with changing requirements while maintaining operational excellence, cost control, and a superior user experience. The solution demonstrates technical coherence through thoughtful component integration rather than a disconnected catalog of technologies.

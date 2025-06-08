@@ -1,0 +1,11 @@
+# Theory assignment
+
+**Which was the most game changing learning you ever had working on massive data pipelines and why was it so crucial from a technical and business point of view?**
+
+The most game-changing learning came when I was building a real-time IoT pipeline at OVO Energy. We were processing thousands of sensor readings per second, and I discovered that industry-standard solutions can absolutely kill you at scale. We'd been using Apache Avro (like everyone tells you to), but when I actually profiled our pipeline, the serialization overhead was eating us alive. Made the call to write a custom binary format instead, not exactly what you'd find in the textbooks, but it literally doubled our throughput and shaved hundreds of milliseconds off our latency. Suddenly our sub-minute alert SLA went from "barely hanging on" to "comfortable headroom."
+
+What really changed my perspective though was learning to put business impact first, even when it meant making "impure" technical choices. When Flink's exactly-once checkpointing started causing stalls under heavy load, I had to make peace with relaxing to at-least-once processing. Because here's the thing: a theoretically perfect system that delivers alerts after someone's solar battery has already overheated is useless. Those milliseconds we saved weren't just numbers on a dashboard, they were the difference between preventing actual fires and having to explain why our "consistent" system failed.
+
+The technical side was eye-opening too. Nothing, and I mean nothing, worked the way the docs said it would at our scale. Kafka partitions got wildly uneven despite following best practices for key distribution. One slow Kafka sink triggered Flink backpressure that choked the entire pipeline. We had to get creative: over-provisioning Flink parallelism beyond partition count, custom partition assignment logic, aggressive JVM tuning. Every "standard" solution needed serious tweaking or outright replacement.
+
+This whole experience taught me that real engineering isn't about following established patterns, it's about understanding your systems deeply enough to know when those patterns don't apply. That custom serializer? It saved us from doubling our infrastructure costs and let us onboard thousands more devices while still hitting our safety-critical SLAs.

@@ -81,36 +81,59 @@ The proposed batch-first architecture processes mobile events through a simplifi
 
 ```mermaid
 graph TB
-    SDK[BeReal iOS SDK]
-    iOS[iOS App]
-    Android[Android App Future]
-    PS[Cloud Pub/Sub]
-    PSS[Pub/Sub to GCS]
-    CS[Cloud Storage]
-    GA4[GA4 BigQuery Link]
-    DP[Dataproc Primary]
-    DPS[Dataproc Streaming]
-    WF[Cloud Workflows]
-    COMP[Cloud Composer]
-    ICE[Iceberg Tables]
-    BQ[BigQuery Native]
-    SP[Cloud Spanner Optional]
-    BT[BigTable]
-    CH[ClickHouse Optional]
-    FS[Vertex AI Feature Store]
-    DBTC[DBT Core]
-    DBTSL[DBT Semantic Layer]
-    DBTD[DBT Docs]
-    DC[Data Catalog]
-    DB[Databricks Optional]
-    VAI[Vertex AI Training]
-    VAR[Model Registry]
-    VAE[Vertex AI Endpoints]
-    SUP[Apache Superset]
-    API[Analytics API]
-    REC[Recommendation API]
-    RD[re_data]
-    MC[Monte Carlo Optional]
+    subgraph "Mobile Layer"
+        SDK[BeReal iOS SDK - Swift + SQLite]
+        iOS[iOS App]
+        Android[Android App - Future]
+    end
+    
+    subgraph "Ingestion Layer"
+        PS[Cloud Pub/Sub - 100 partitions]
+        PSS[Pub/Sub to GCS - Subscription]
+        CS[Cloud Storage - Hourly Partitions]
+        GA4[GA4 BigQuery Link - Historical Data]
+    end
+    
+    subgraph "Processing Layer"
+        DP[Dataproc - Primary Processing]
+        DPS[Dataproc Streaming - Optional Real-time]
+        WF[Cloud Workflows - Simple Orchestration]
+        COMP[Cloud Composer - Complex Orchestration]
+    end
+    
+    subgraph "Storage Layer - Hybrid"
+        ICE[Iceberg Tables - Staging/Schema Evolution]
+        BQ[BigQuery Native - Kimball DWH]
+        SP[Cloud Spanner - Optional User Profiles]
+        BT[BigTable - ML Features]
+        CH[ClickHouse - Optional Internal Analytics]
+        FS[Vertex AI - Feature Store]
+    end
+    
+    subgraph "Transformation Layer"
+        DBTC[DBT Core - Open Source]
+        DBTSL[DBT Semantic Layer]
+        DBTD[DBT Docs - Cloud Run]
+        DC[Data Catalog - Metadata]
+    end
+    
+    subgraph "ML Platforms"
+        DB[Databricks - Optional Dev Only]
+        VAI[Vertex AI - Model Training]
+        VAR[Model Registry]
+        VAE[Vertex AI - Endpoints]
+    end
+    
+    subgraph "Analytics & Serving"
+        SUP[Apache Superset - Open Source BI]
+        API[Analytics API - 10ms SLA]
+        REC[Recommendation API - 50ms SLA]
+    end
+    
+    subgraph "Observability"
+        RD[re_data - Open Source]
+        MC[Monte Carlo - Future Option]
+    end
     
     iOS --> SDK
     Android -.-> SDK

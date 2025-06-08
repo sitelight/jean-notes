@@ -12,17 +12,20 @@ The solution provides a coherent flow from mobile SDK through to analytics and M
 graph LR
     subgraph "1 Collection"
         SDK[Mobile SDK - Batching Logic]
+        GA4[GA4 - Historical Data]
     end
     
     subgraph "2 Ingestion"
         PS[Pub/Sub - Message Queue]
         CS[Cloud Storage - Raw Landing]
+        GA4BQ[GA4 BigQuery Link - Auto Export]
     end
     
     subgraph "3 Storage"
         ICE[Iceberg - Staging Layer]
         BQ[BigQuery - Analytics DWH]
         SP[Spanner - Transactional]
+        GA4RAW[GA4 Raw Tables - events_*]
     end
     
     subgraph "4 Processing"
@@ -38,8 +41,11 @@ graph LR
     end
     
     SDK -->|Micro-batches| PS
+    GA4 -->|Auto-export| GA4BQ
     PS -->|100ms triggers| CS
+    GA4BQ -->|Daily tables| GA4RAW
     CS -->|Hourly jobs| DF
+    GA4RAW -->|Historical backfill| DBT
     DF -->|Raw data| ICE
     ICE -->|Transform| DBT
     DBT -->|Kimball model| BQ
@@ -52,10 +58,11 @@ graph LR
 
 **Data Flow Coherence:**
 1. **SDK → Ingestion**: Intelligent batching (50 events/60s) optimizes mobile battery and network
-2. **Ingestion → Storage**: Micro-batching (100ms) balances latency with efficiency
-3. **Storage → Processing**: Hybrid approach - Iceberg for flexibility, BigQuery for performance
-4. **Processing → Exposure**: Kimball dimensional model ensures consistent analytics
-5. **Real-time Path**: Spanner provides sub-5ms access for user preferences and ML features
+2. **GA4 → BigQuery**: Native connector provides seamless historical data backfill (free up to 1M events/day)
+3. **Ingestion → Storage**: Micro-batching (100ms) balances latency with efficiency
+4. **Storage → Processing**: Hybrid approach - Iceberg for flexibility, BigQuery for performance
+5. **Processing → Exposure**: DBT creates unified schema combining GA4 historical + new SDK data
+6. **Real-time Path**: Spanner provides sub-5ms access for user preferences and ML features
 
 ## Architecture Overview
 
@@ -85,13 +92,14 @@ graph TB
         SDK[BeReal iOS SDK - Swift + SQLite]
         iOS[iOS App]
         Android[Android App - Future]
+        GA4[GA4 - Historical Analytics]
     end
     
     subgraph "Ingestion Layer"
         PS[Cloud Pub/Sub - 100 partitions]
         PSS[Pub/Sub to GCS - Subscription]
         CS[Cloud Storage - Hourly Partitions]
-        GA4[GA4 BigQuery Link - Historical Data]
+        GA4BQ[GA4 BigQuery Link - Native Export]
     end
     
     subgraph "Processing Layer"
@@ -108,6 +116,7 @@ graph TB
         BT[BigTable - ML Features]
         CH[ClickHouse - Optional Internal Analytics]
         FS[Vertex AI - Feature Store]
+        GA4RAW[GA4 Raw Tables - events_*]
     end
     
     subgraph "Transformation Layer"
@@ -137,8 +146,9 @@ graph TB
     
     iOS --> SDK
     Android -.-> SDK
+    GA4 --> GA4BQ
     SDK --> PS
-    GA4 --> BQ
+    GA4BQ --> GA4RAW
     PS --> PSS
     PS -.-> DPS
     PSS --> CS
@@ -147,6 +157,7 @@ graph TB
     COMP -.-> DP
     DP --> ICE
     DPS -.-> BQ
+    GA4RAW --> DBTC
     ICE --> DBTC
     DBTC --> DBTSL
     DBTSL --> BQ
@@ -2020,7 +2031,7 @@ alerts:
 
 ### Core Solution Cost Breakdown (10TB/day)
 
-**Recommended Architecture: Pub/Sub → GCS → Dataproc**
+**Recommended Architecture: Pub/Sub → GCS → Dataproc + GA4 Migration**
 - **BigQuery Native Storage**: $4,608 (marts layer, with compression)
 - **Iceberg Storage (GCS)**: $3,072 (staging layer)
 - **BigQuery Compute**: $300 (native table queries)
@@ -2031,6 +2042,7 @@ alerts:
   - 8 preemptible workers: $350/month
 - **Pub/Sub**: $12,000 (1B messages/day)
 - **Pub/Sub to GCS Subscription**: $0 (included in Pub/Sub cost)
+- **GA4 BigQuery Export**: $0 (free up to 1M events/day for historical backfill)
 - **Vertex AI**: $2,000 (training and serving)
 - **Cloud Workflows**: $50 (orchestration)
 - **DBT Core Infrastructure**: $100 (Cloud Run for docs)
@@ -2038,6 +2050,12 @@ alerts:
 - **re_data monitoring**: $50 (compute costs)
 
 **Core Solution Total: $25,377/month**
+
+**Migration Benefits:**
+- **GA4 Historical Data**: 2+ years of event history preserved at zero additional cost
+- **Seamless Transition**: DBT creates unified schema combining GA4 + new SDK data
+- **Zero Data Loss**: GA4 continues collecting during SDK rollout period
+- **Cost Effective**: Native BigQuery export eliminates need for third-party ETL tools
 
 ### Alternative Architecture Comparison
 
@@ -2190,6 +2208,7 @@ terraform-apply:
 
 ### Phase 1: Foundation (Weeks 1-4)
 - Deploy core GCP infrastructure (Pub/Sub, Cloud Storage, BigQuery)
+- **Set up GA4 BigQuery Link for historical data export** (30 minutes setup, zero cost)
 - Implement mobile SDK with intelligent batching logic
 - Set up Iceberg staging layer and native BigQuery analytics layer
 - Configure Cloud Spanner for user profile management
@@ -2197,11 +2216,12 @@ terraform-apply:
 
 ### Phase 2: Data Pipeline & Modeling (Weeks 5-8)
 - Configure Dataflow batch processing with micro-batching
+- **Implement DBT models for GA4 normalization and unified event schema**
 - Implement Kimball dimensional model in BigQuery
   - Design fact tables (user engagement, sessions, recommendations)
   - Create conformed dimensions (users, content, date, location)
   - Implement SCD Type 2 for user dimensions
-- Deploy DBT with dual-engine support (Spark + BigQuery)
+- **Deploy unified schema combining GA4 historical + new SDK data**
 - Set up Data Catalog with GDPR policy tags
 - Implement data quality validation framework
 
@@ -3245,4 +3265,5 @@ Key achievements:
 - **Flexibility**: Iceberg staging enables schema evolution and multi-engine processing
 - **Cost Efficiency**: 29% cost reduction while adding real-time capabilities
 - **Scalability**: Processes 10TB daily with elastic scaling to 100TB
+- **Data Governance**: Kimball methodology ensures consistent, auditable analytics
 - **Data Governance**: Kimball methodology ensures consistent, auditable analytics

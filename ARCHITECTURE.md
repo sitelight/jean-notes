@@ -4,6 +4,47 @@
 
 This document presents a production-ready data architecture design for BeReal's mobile app analytics platform, replacing Google Analytics with an in-house solution capable of handling 10TB daily data from billions of events and millions of daily active users (DAUs). The architecture leverages Google Cloud Platform (GCP) services with Apache Iceberg as the staging format, native BigQuery for analytics, DBT for transformations, and a hybrid Vertex AI/Databricks ML infrastructure. The design follows Kimball dimensional modeling principles and includes Cloud Spanner for transactional consistency, prioritizing scalability, cost-efficiency, and GDPR compliance.
 
+## Document Structure Summary
+
+This comprehensive architecture document covers the following key areas:
+
+**Core Architecture & Design Principles:**
+- End-to-End Data Flow Architecture
+- Architecture Overview  
+- Why Batch Architecture Over Streaming
+
+**Data Pipeline Components:**
+- Detailed Component Design
+- Data Ingestion Pipeline
+- Why BigQuery as the Core Analytics Engine
+- Hybrid Storage Strategy: Iceberg + Native BigQuery
+- Data Formats and Storage Optimization: Why Iceberg Over Raw Parquet
+
+**Data Modeling & Quality:**
+- Data Modeling with Kimball Methodology
+- Data Quality Framework
+- GA4 to BigQuery Migration for Historical Backfill
+
+**Processing & Transformation:**
+- DBT Core Implementation (Cost-Effective Alternative)
+- Why Include Dataproc in Core Solution
+- Dataflow vs Dataproc: Choosing the Right Processing Engine
+- Orchestration Strategy for Batch Workflows
+
+**ML & Analytics Infrastructure:**
+- ML Infrastructure: Vertex AI + Optional Databricks
+- Real-time Serving Layer: Spanner vs BigTable vs ClickHouse
+- BigQuery Native Table Optimization
+- DBT Semantic Layer for BI Tools
+
+**Operations & Management:**
+- Scaling Strategy for 10TB Daily
+- Security, GDPR, and Compliance
+- Monitoring and Alerting Strategy
+- Cost Analysis and Optimization
+- Infrastructure as Code
+- Implementation Timeline
+
 ## End-to-End Data Flow Architecture
 
 The solution provides a coherent flow from mobile SDK through to analytics and ML serving:
@@ -936,46 +977,106 @@ def recommendation_pipeline():
 - Need for Delta Lake features not available in Iceberg
 - Budget allows for $10K+ monthly development environment
 
-### Data Formats and Storage Optimization
+## Data Formats and Storage Optimization: Why Iceberg Over Raw Parquet
 
-**Understanding Parquet (Not Just Compression):**
-Parquet is a **columnar storage format**, not merely a compression tool. This distinction is critical for our architecture:
+**Understanding Apache Iceberg - The Modern Table Format:**
 
-1. **Columnar Benefits for Analytics**:
-   - **Projection Pushdown**: Read only needed columns (5% of data for typical queries)
-   - **Predicate Pushdown**: Skip entire row groups based on statistics
-   - **Type-Specific Encoding**: Dictionary encoding for strings, delta encoding for timestamps
-   - **Compression**: Additional 70% size reduction with Snappy/ZSTD
+Apache Iceberg is a **table format** that provides a metadata layer on top of file formats like Parquet or ORC. This distinction is critical for our architecture:
 
-2. **Parquet in Our Architecture**:
+1. **Iceberg vs Parquet - Key Differences**:
+   - **Parquet**: A columnar file format optimized for analytics
+   - **Iceberg**: A table format that manages collections of Parquet files with ACID guarantees
+   - **Relationship**: Iceberg uses Parquet as its storage format but adds critical capabilities
+
+2. **Why Iceberg for BeReal's Staging Layer**:
    ```python
-   # Writing optimized Parquet files in Dataflow
-   beam.io.WriteToParquet(
-       file_path_prefix='gs://bereal-iceberg/data',
-       schema=pyarrow.schema([
-           ('user_id', pyarrow.string()),
-           ('event_timestamp', pyarrow.timestamp('us')),
-           ('event_type', pyarrow.dictionary(pyarrow.int32(), pyarrow.string())),
-           ('metrics', pyarrow.struct([
-               ('duration', pyarrow.int64()),
-               ('revenue', pyarrow.decimal128(10, 2))
-           ]))
-       ]),
-       file_name_suffix='.snappy.parquet',
-       compression='snappy',
-       row_group_size=128 * 1024 * 1024  # 128MB row groups
+   # Iceberg table structure for BeReal events
+   from pyiceberg.catalog import load_catalog
+   
+   catalog = load_catalog("bereal_catalog", **{
+       "uri": "gs://bereal-iceberg-warehouse/catalog",
+       "warehouse": "gs://bereal-iceberg-warehouse/data"
+   })
+   
+   # Create table with schema evolution capability
+   catalog.create_table(
+       "staging.raw_events",
+       schema=Schema(
+           NestedField(1, "user_id", StringType(), required=True),
+           NestedField(2, "event_timestamp", TimestampType(), required=True),
+           NestedField(3, "event_type", StringType()),
+           NestedField(4, "properties", MapType(5, 6, StringType(), StringType())),
+           # Schema can evolve without rewriting data
+       ),
+       partition_spec=PartitionSpec(
+           PartitionField(source_id=2, transform=day, name="event_day")
+       )
    )
    ```
 
-3. **Storage Calculation with Parquet**:
+3. **Iceberg Advantages for 10TB Daily Processing**:
+   - **ACID Transactions**: Concurrent writes from multiple Dataflow jobs without conflicts
+   - **Schema Evolution**: Add/remove/rename columns without rewriting 10TB
+   - **Partition Evolution**: Change partitioning strategy without data rewrite
+   - **Time Travel**: Query data as of any point in time for debugging
+   - **Hidden Partitioning**: No need to know partition structure in queries
+   - **Incremental Processing**: Only process new data since last checkpoint
+
+4. **Storage Architecture with Iceberg**:
+   ```
+   gs://bereal-iceberg-warehouse/
+   ├── catalog/
+   │   └── staging/
+   │       └── raw_events/
+   │           └── metadata/
+   │               ├── v1.metadata.json
+   │               ├── v2.metadata.json  # Schema evolution tracked
+   │               └── current.metadata.json
+   ├── data/
+   │   └── staging/
+   │       └── raw_events/
+   │           ├── data_20240608_001.parquet  # Actual Parquet files
+   │           ├── data_20240608_002.parquet
+   │           └── manifests/
+   │               ├── manifest-001.avro  # File listings
+   │               └── manifest-list.avro # Snapshot tracking
+   ```
+
+5. **Storage Calculation with Iceberg**:
    ```
    Raw JSON: 10TB/day
-   → Compressed JSON (GZIP): 3TB/day
-   → Parquet (Snappy): 1TB/day
-   → Parquet + Dictionary Encoding: 0.7TB/day
+   → Compressed JSON (GZIP): 3TB/day  
+   → Iceberg with Parquet (Snappy): 1TB/day
+   → Iceberg metadata overhead: ~10GB/day (1%)
    
-   Annual savings: (10TB - 0.7TB) × 365 × $0.02/GB = $68,000/year
+   Total Iceberg storage: 1.01TB/day
+   Annual savings vs raw: (10TB - 1.01TB) × 365 × $0.02/GB = $65,000/year
    ```
+
+6. **Query Performance Benefits**:
+   ```sql
+   -- Iceberg handles partition pruning automatically
+   SELECT COUNT(DISTINCT user_id)
+   FROM `bereal-analytics.staging.raw_events`
+   WHERE event_timestamp BETWEEN '2024-06-01' AND '2024-06-08'
+   -- Iceberg automatically prunes to only relevant partitions
+   -- No need to specify partition columns in WHERE clause
+   ```
+
+7. **Schema Evolution in Production**:
+   ```python
+   # Add new column without downtime or data rewrite
+   table = catalog.load_table("staging.raw_events")
+   with table.update_schema() as update:
+       update.add_column("session_id", StringType(), doc="Added for sessionization")
+       update.add_column("app_version", StringType(), doc="Track SDK versions")
+   
+   # Old Dataflow jobs continue writing without session_id
+   # New Dataflow jobs write with session_id
+   # Both work simultaneously!
+   ```
+
+8. **Time
 
 ### GA4 to BigQuery Migration for Historical Backfill
 
@@ -2297,973 +2398,3 @@ This comprehensive architecture delivers a production-ready, cost-optimized solu
 - **Scalability**: Proven to 100TB/day with same architecture
 
 This solution demonstrates that simpler is better - by removing unnecessary complexity (Cloud Functions, streaming for batch workloads) and focusing on proven patterns (Pub/Sub→GCS→Spark), we deliver a more reliable, maintainable, and cost-effective platform. The architecture provides clear upgrade paths while ensuring BeReal can start simple and scale based on actual needs rather than imagined complexity.
-    )
-    
-    # Business rule validation
-    df.expect_column_values_to_be_between(
-        'event_timestamp',
-        min_value=(datetime.now() - timedelta(hours=24)),
-        max_value=datetime.now()
-    )
-    
-    # Data distribution checks
-    df.expect_column_distinct_values_to_be_in_set(
-        'event_type',
-        ['view', 'click', 'share', 'react', 'post']
-    )
-    
-    return df.validate()
-
-# DBT Data Quality Tests
-# models/staging/schema.yml
-version: 2
-models:
-  - name: stg_user_events
-    tests:
-      - dbt_expectations.expect_table_row_count_to_be_between:
-          min_value: 900000000
-          max_value: 1100000000
-      - dbt_expectations.expect_column_value_lengths_to_equal:
-          column_name: user_id
-          value: 36
-    columns:
-      - name: user_id
-        tests:
-          - not_null
-          - unique_combination_of_columns:
-              combination_of_columns: ['user_id', 'event_timestamp']
-      - name: event_revenue
-        tests:
-          - dbt_expectations.expect_column_values_to_be_between:
-              min_value: 0
-              max_value: 1000
-```
-
-**Quality Metrics Dashboard:**
-- **Data Freshness**: Max lag between event time and processing time
-- **Completeness**: % of expected events received
-- **Validity**: % of events passing all validation rules
-- **Consistency**: Cross-table referential integrity
-- **Uniqueness**: Duplicate detection rate
-- **Timeliness**: % of data processed within SLA
-
-### CI/CD and Deployment Strategy
-
-**Unified Metadata Management:**
-```mermaid
-graph TB
-    subgraph "Data Sources"
-        ICE[Iceberg Tables]
-        BQ[BigQuery Tables]
-        SP[Spanner Tables]
-        DBT[DBT Models]
-    end
-    
-    subgraph "Data Catalog"
-        TAG[Tag Templates]
-        POL[Policy Tags]
-        LIN[Data Lineage]
-        SENS[Sensitive Data]
-    end
-    
-    subgraph "Consumers"
-        DS[Data Scientists]
-        AN[Analysts]
-        ENG[Engineers]
-    end
-    
-    ICE --> TAG
-    BQ --> TAG
-    SP --> TAG
-    DBT --> LIN
-    TAG --> POL
-    POL --> SENS
-    SENS --> DS
-    LIN --> AN
-    TAG --> ENG
-```
-
-**Catalog Implementation:**
-```python
-from google.cloud import datacatalog_v1
-
-def create_bereal_taxonomy():
-    """Create data classification taxonomy for BeReal"""
-    client = datacatalog_v1.PolicyTagManagerClient()
-    
-    # Create taxonomy for data classification
-    taxonomy = datacatalog_v1.Taxonomy()
-    taxonomy.display_name = "BeReal Data Classification"
-    taxonomy.description = "Data sensitivity levels for GDPR compliance"
-    
-    parent = datacatalog_v1.PolicyTagManagerClient.common_location_path(
-        'bereal-analytics', 'us-central1'
-    )
-    
-    taxonomy = client.create_taxonomy(
-        parent=parent,
-        taxonomy=taxonomy
-    )
-    
-    # Create policy tags
-    policy_tags = [
-        ("PII", "Personally Identifiable Information"),
-        ("Sensitive", "Sensitive business data"),
-        ("Public", "Public or anonymized data"),
-        ("Restricted", "Restricted access required")
-    ]
-    
-    for tag_name, description in policy_tags:
-        policy_tag = datacatalog_v1.PolicyTag()
-        policy_tag.display_name = tag_name
-        policy_tag.description = description
-        
-        client.create_policy_tag(
-            parent=taxonomy.name,
-            policy_tag=policy_tag
-        )
-
-# Apply tags to BigQuery columns
-def tag_bigquery_columns():
-    """Apply policy tags to sensitive columns"""
-    from google.cloud import bigquery
-    
-    client = bigquery.Client()
-    table_ref = client.dataset('marts').table('dim_users')
-    table = client.get_table(table_ref)
-    
-    # Update schema with policy tags
-    new_schema = []
-    for field in table.schema:
-        if field.name in ['email_domain', 'user_id']:
-            field.policy_tags = PolicyTagList(
-                names=['projects/bereal-analytics/locations/us-central1/taxonomies/123/policyTags/PII']
-            )
-        new_schema.append(field)
-    
-    table.schema = new_schema
-    client.update_table(table, ['schema'])
-```
-
-### DBT Transformation Layer with Multi-Engine Support
-
-**DBT Architecture for Hybrid Processing:**
-```mermaid
-graph LR
-    subgraph "Iceberg Staging"
-        IS[Iceberg Raw Data]
-    end
-    
-    subgraph "DBT Processing Engines"
-        DBTS[DBT-Spark<br/>Heavy Transformations]
-        DBTBQ[DBT-BigQuery<br/>Analytics Models]
-    end
-    
-    subgraph "Output Layers"
-        BQN[BigQuery Native<br/>Analytics Marts]
-        ICE[Iceberg<br/>ML Features]
-    end
-    
-    IS --> DBTS
-    IS --> DBTBQ
-    DBTS --> ICE
-    DBTS --> BQN
-    DBTBQ --> BQN
-```
-
-**Why DBT with Multiple Engines:**
-- **DBT-Spark on Databricks/Dataproc**: For complex transformations requiring Spark's distributed computing
-- **DBT-BigQuery**: For SQL-based transformations leveraging BigQuery's native optimizations
-- **Unified Development**: Single codebase with engine-specific optimizations
-
-**Transformation Architecture:**
-```
-├── models/
-│   ├── staging/              # Iceberg tables
-│   │   ├── stg_mobile_events.py     # PySpark for complex parsing
-│   │   └── stg_user_profiles.sql    # SQL for simple transforms
-│   ├── intermediate/         # Mixed processing
-│   │   ├── int_user_sessions_spark.py    # Session windowing in Spark
-│   │   └── int_daily_aggregates.sql      # SQL aggregations
-│   └── marts/               # Native BigQuery
-│       ├── fct_user_engagement.sql
-│       ├── dim_users.sql
-│       └── ml_feature_store_spark.py     # Complex feature engineering
-```
-
-**DBT-Spark Configuration for Databricks:**
-```yaml
-# profiles.yml
-bereal_databricks:
-  target: prod
-  outputs:
-    prod:
-      type: databricks
-      token: "{{ env_var('DATABRICKS_TOKEN') }}"
-      host: bereal.cloud.databricks.com
-      http_path: /sql/1.0/warehouses/abc123
-      catalog: bereal_analytics
-      schema: dbt_transforms
-      threads: 20
-      
-# dbt_project.yml
-models:
-  bereal:
-    staging:
-      +materialized: view
-      +file_format: iceberg
-      +compute_engine: databricks
-    marts:
-      +materialized: table
-      +file_format: delta  # Or native BigQuery
-      +compute_engine: bigquery
-```
-
-### ML Infrastructure: Vertex AI + Optional Databricks
-
-**Production ML Architecture (Vertex AI Only):**
-```mermaid
-graph TB
-    subgraph "Data Sources"
-        ICE[Iceberg Staging]
-        BQ[BigQuery DWH]
-    end
-    
-    subgraph "Production ML Platform (Required)"
-        VAW[Vertex AI Workbench]
-        VAT[Vertex AI Training]
-        VAR[Model Registry]
-        VAE[Prediction Endpoints]
-        VFS[Feature Store]
-    end
-    
-    subgraph "Optional Dev/Lab Environment"
-        DBW[Databricks Workspace<br/>Development Only]
-        DBE[Experimentation<br/>Not for Production]
-    end
-    
-    subgraph "Serving Layer"
-        BT[BigTable]
-        API[Prediction API]
-    end
-    
-    ICE --> VAW
-    BQ --> VAW
-    ICE -.-> DBW
-    VAW --> VAT
-    VAT --> VAR
-    VAR --> VAE
-    VAE --> BT
-    BT --> API
-    DBW -.-> DBE
-```
-
-**Why Databricks is Optional:**
-Databricks excels at exploration but becomes cost-prohibitive at production scale. DBU costs can reach $0.40-0.75 per unit, making 24/7 production workloads expensive.
-
-**Cost Comparison for Production ML:**
-| Workload | Databricks | Vertex AI | Savings |
-|----------|------------|-----------|---------|
-| Daily Training (8 hours) | $240/day | $80/day | 67% |
-| Real-time Serving | $15,000/month | $2,000/month | 87% |
-| Feature Engineering | $180/day | $60/day | 67% |
-| Total Monthly | $12,000 | $3,500 | 71% |
-
-**Recommended ML Architecture (Without Databricks):**
-```python
-# Vertex AI Pipeline for Production
-from google.cloud import aiplatform
-from google.cloud import bigquery
-import kfp
-from kfp.v2 import compiler
-
-@kfp.dsl.pipeline(name='bereal-recommendation-pipeline')
-def recommendation_pipeline():
-    # Step 1: Feature Engineering in BigQuery
-    feature_engineering = kfp.dsl.ContainerOp(
-        name='feature_engineering',
-        image='gcr.io/bereal/feature-eng:latest',
-        command=['python', 'feature_engineering.py'],
-        arguments=[
-            '--input_table', 'bereal.staging.user_events',
-            '--output_table', 'bereal.ml.user_features'
-        ]
-    )
-    
-    # Step 2: Train Model with Vertex AI
-    training_job = aiplatform.CustomTrainingJob(
-        display_name='recommendation_model',
-        script_path='train.py',
-        container_uri='gcr.io/vertex-ai/training/tf-gpu.2-8:latest',
-        requirements=['tensorflow==2.8', 'bigquery==2.34'],
-        machine_type='n1-standard-8',
-        accelerator_type='NVIDIA_TESLA_T4',
-        accelerator_count=1
-    )
-    
-    # Step 3: Deploy to Endpoint
-    endpoint = aiplatform.Endpoint.create(
-        display_name='recommendation_endpoint',
-        machine_type='n1-standard-4',
-        min_replica_count=3,
-        max_replica_count=10,
-        accelerator_type='NVIDIA_TESLA_T4'
-    )
-    
-    return endpoint
-
-# Optional: Databricks for Development Only
-# Use for:
-# - Exploratory data analysis
-# - Prototype development
-# - One-off experiments
-# Do NOT use for:
-# - Production pipelines
-# - 24/7 serving
-# - Scheduled jobs
-```
-
-**When to Consider Adding Databricks (After 12+ Months):**
-- Team has 10+ data scientists needing collaborative notebook
-- Data scientists would prefer to collaborate a bit more on notebooks (the Databricks UI is a bit more friendlty)
-- Budget allows for $10K+ monthly development environment
-
-### Data Migration Pipeline: Iceberg to Native BigQuery
-
-**Orchestrated Migration Strategy:**
-```mermaid
-graph LR
-    subgraph "Iceberg Staging"
-        ICE1[Raw Events]
-        ICE2[User Profiles]
-        ICE3[Interaction Data]
-    end
-    
-    subgraph "Migration Layer"
-        VAL[Validation]
-        TRANS[Transformation]
-        QC[Quality Checks]
-    end
-    
-    subgraph "BigQuery Native"
-        BQ1[fct_user_engagement]
-        BQ2[dim_users]
-        BQ3[agg_daily_metrics]
-    end
-    
-    ICE1 --> VAL
-    ICE2 --> VAL
-    ICE3 --> VAL
-    VAL --> TRANS
-    TRANS --> QC
-    QC --> BQ1
-    QC --> BQ2
-    QC --> BQ3
-```
-
-**Migration DAG in Cloud Composer:**
-```python
-from airflow import DAG
-from airflow.providers.google.cloud.operators.bigquery import (
-    BigQueryCreateEmptyTableOperator,
-    BigQueryInsertJobOperator
-)
-
-# Daily migration from Iceberg to Native BigQuery
-migration_dag = DAG(
-    'iceberg_to_bigquery_migration',
-    schedule_interval='0 2 * * *',  # 2 AM daily
-    catchup=False
-)
-
-# Validate Iceberg data quality
-validate_task = BigQueryInsertJobOperator(
-    task_id='validate_iceberg_data',
-    configuration={
-        "query": {
-            "query": """
-            SELECT 
-                COUNT(*) as record_count,
-                COUNT(DISTINCT user_id) as unique_users,
-                MAX(event_timestamp) as latest_event
-            FROM `bereal-analytics.staging.raw_events`
-            WHERE DATE(event_timestamp) = CURRENT_DATE() - 1
-            """,
-            "useLegacySql": False
-        }
-    }
-)
-
-# Transform and load to native table
-transform_task = BigQueryInsertJobOperator(
-    task_id='transform_to_native',
-    configuration={
-        "query": {
-            "query": """
-            CREATE OR REPLACE TABLE `bereal-analytics.marts.fct_user_engagement`
-            PARTITION BY event_date
-            CLUSTER BY user_id, event_type
-            AS
-            WITH cleaned_events AS (
-                SELECT 
-                    user_id,
-                    event_type,
-                    DATE(event_timestamp) as event_date,
-                    -- Complex transformations
-                FROM `bereal-analytics.staging.raw_events`
-                WHERE DATE(event_timestamp) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-            )
-            SELECT * FROM cleaned_events
-            """,
-            "useLegacySql": False
-        }
-    }
-)
-
-validate_task >> transform_task
-```
-
-### BigQuery Native Table Optimization
-
-**Performance Optimization Strategies:**
-
-**1. Partitioning and Clustering:**
-```sql
--- Optimal configuration for user engagement metrics
-CREATE OR REPLACE TABLE `bereal-analytics.marts.fct_user_engagement`
-PARTITION BY DATE(event_date)
-CLUSTER BY user_id, event_type, country_code
-OPTIONS (
-  partition_expiration_days = 400,  -- 13 months for YoY analysis
-  require_partition_filter = true    -- Enforce cost control
-) AS
-WITH transformed_events AS (
-  SELECT * FROM `bereal-analytics.staging.events_iceberg`
-  WHERE DATE(event_timestamp) >= DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-)
-SELECT ...;
-```
-
-**2. Materialized Views for Common Queries:**
-```sql
--- Pre-aggregate daily active users
-CREATE MATERIALIZED VIEW `bereal-analytics.marts.mv_daily_active_users`
-PARTITION BY metric_date
-CLUSTER BY country_code
-AS
-SELECT 
-  DATE(event_timestamp) as metric_date,
-  country_code,
-  COUNT(DISTINCT user_id) as dau,
-  COUNT(DISTINCT session_id) as daily_sessions
-FROM `bereal-analytics.marts.fct_user_engagement`
-GROUP BY 1, 2;
-```
-
-**3. Search Indexes for Text Analytics:**
-```sql
--- Enable fast content searches
-CREATE SEARCH INDEX content_search_idx
-ON `bereal-analytics.marts.dim_user_content`(post_text, comment_text)
-OPTIONS (
-  analyzer = 'LOG_ANALYZER',
-  data_size_threshold_mb = 20
-);
-```
-
-**Query Performance Comparison:**
-| Query Type | Iceberg (Staging) | BigQuery Native (Marts) | Improvement |
-|------------|-------------------|------------------------|-------------|
-| User Daily Aggregation | 45 seconds | 0.8 seconds | 56x faster |
-| Recommendation Features | 120 seconds | 3.2 seconds | 38x faster |
-| Content Search | 89 seconds | 1.1 seconds | 81x faster |
-| Time-series Analysis | 67 seconds | 2.4 seconds | 28x faster |
-
-**4. BI Engine Acceleration:**
-```sql
--- Reserve BI Engine capacity for Looker dashboards
-CREATE RESERVATION `bereal-analytics.bi_engine_reservation`
-OPTIONS (
-  size_gb = 100,
-  preferred_tables = [
-    'bereal-analytics.marts.fct_user_engagement',
-    'bereal-analytics.marts.dim_users',
-    'bereal-analytics.marts.mv_daily_active_users'
-  ]
-);
-```
-
-### Real-time Serving Layer: Spanner vs BigTable vs ClickHouse
-
-**Architecture for Sub-second Access Patterns:**
-```mermaid
-graph TB
-    subgraph "Write Path"
-        ML[ML Predictions]
-        AGG[Aggregation Pipeline]
-    end
-    
-    subgraph "Storage Options"
-        SP[Cloud Spanner<br/>Transactional]
-        BT[BigTable<br/>High Throughput]
-        CH[ClickHouse<br/>Analytics]
-    end
-    
-    subgraph "Read Path"
-        API[Serving API]
-        CACHE[Redis Cache]
-    end
-    
-    ML --> SP
-    ML --> BT
-    AGG --> CH
-    AGG --> SP
-    SP --> API
-    BT --> API
-    CH --> API
-    API --> CACHE
-```
-
-**Technology Comparison for BeReal Use Cases:**
-
-| Criteria | Cloud Spanner | BigTable | ClickHouse | Recommendation |
-|----------|---------------|----------|------------|----------------|
-| **Latency** | 1-5ms (regional) | <10ms | 10-50ms | Spanner for transactions |
-| **Throughput** | 10K QPS/node | 100K QPS/node | 5K QPS/node | BigTable for scale |
-| **Cost/TB** | $1,950/month | $450/month | $200/month | ClickHouse for analytics |
-| **Consistency** | Strong global | Eventual | Eventual | Spanner for user data |
-| **SQL Support** | Full SQL | NoSQL API | Full SQL + OLAP | Spanner/ClickHouse |
-| **Schema** | Fixed | Flexible | Fixed | BigTable for features |
-
-**Implementation Strategy:**
-
-**1. Cloud Spanner for User Profile & Transactional Data:**
-```sql
--- User recommendation preferences with strong consistency
-CREATE TABLE UserPreferences (
-    user_id STRING(36) NOT NULL,
-    preference_vector ARRAY<FLOAT64>,
-    last_interaction_timestamp TIMESTAMP,
-    recommendation_settings JSON,
-    version_id INT64,
-) PRIMARY KEY (user_id);
-
--- Real-time interaction tracking
-CREATE TABLE UserInteractions (
-    user_id STRING(36) NOT NULL,
-    item_id STRING(36) NOT NULL,
-    interaction_type STRING(20),
-    interaction_timestamp TIMESTAMP,
-    context JSON,
-) PRIMARY KEY (user_id, interaction_timestamp DESC),
-  INTERLEAVE IN PARENT UserPreferences ON DELETE CASCADE;
-
--- Index for fast lookups
-CREATE INDEX idx_interactions_by_item 
-ON UserInteractions(item_id, interaction_timestamp DESC);
-```
-
-**2. BigTable for ML Feature Serving:**
-```python
-# High-throughput feature serving configuration
-table_config = {
-    'column_families': {
-        'user_features': MaxVersionsGCRule(1),
-        'item_features': MaxVersionsGCRule(1),
-        'context_features': MaxVersionsGCRule(24)  # 24 hours
-    },
-    'row_key_design': 'user_id#shard_id',  # Distributed for 100K QPS
-    'replication': {
-        'us-central1': 3,
-        'us-east1': 2  # Cross-region for DR
-    }
-}
-```
-
-**3. ClickHouse for Pre-aggregated Analytics:**
-```sql
--- Materialized view for real-time analytics
-CREATE MATERIALIZED VIEW user_engagement_realtime
-ENGINE = AggregatingMergeTree()
-PARTITION BY toYYYYMM(event_date)
-ORDER BY (user_id, event_date)
-AS SELECT
-    user_id,
-    toDate(event_timestamp) as event_date,
-    countState() as event_count,
-    uniqState(session_id) as unique_sessions,
-    avgState(engagement_duration) as avg_engagement
-FROM events_stream
-GROUP BY user_id, event_date;
-
--- Query aggregated data in <50ms
-SELECT 
-    countMerge(event_count) as total_events,
-    uniqMerge(unique_sessions) as sessions
-FROM user_engagement_realtime
-WHERE user_id = ? AND event_date >= today() - 7;
-```
-
-**Micro-batching Strategy for Real-time Updates:**
-```python
-# Cloud Function for intelligent micro-batch processing
-import time
-import json
-from google.cloud import pubsub_v1, firestore
-
-class MicroBatchProcessor:
-    def __init__(self):
-        self.batch_size_threshold = 1000
-        self.time_threshold_ms = 100
-        self.urgency_patterns = {
-            'purchase': 10,      # Process within 10ms
-            'recommendation': 100, # Process within 100ms  
-            'pageview': 1000    # Process within 1s
-        }
-    
-    def process_event(self, event, context):
-        """Intelligent micro-batching based on event type and volume"""
-        event_data = json.loads(event['data'])
-        event_type = event_data.get('event_type', 'default')
-        
-        # Determine batch window based on event urgency
-        batch_window = self.urgency_patterns.get(event_type, 100)
-        batch_key = f"batch:{event_type}:{int(time.time() * 1000 / batch_window)}"
-        
-        # Add to current micro-batch
-        batch_ref = firestore.client().collection('micro_batches').document(batch_key)
-        batch_ref.update({
-            'events': firestore.ArrayUnion([event_data]),
-            'count': firestore.Increment(1),
-            'last_updated': firestore.SERVER_TIMESTAMP
-        })
-        
-        # Check if batch should be processed
-        batch_data = batch_ref.get().to_dict()
-        if batch_data['count'] >= self.batch_size_threshold:
-            self.trigger_batch_processing(batch_key, 'size_threshold')
-        elif time.time() * 1000 - batch_data['created_at'] > batch_window:
-            self.trigger_batch_processing(batch_key, 'time_threshold')
-    
-    def trigger_batch_processing(self, batch_key, trigger_reason):
-        """Trigger downstream processing based on batch characteristics"""
-        publisher = pubsub_v1.PublisherClient()
-        topic_path = publisher.topic_path('bereal-analytics', 'batch-processing')
-        
-        message = {
-            'batch_key': batch_key,
-            'trigger_reason': trigger_reason,
-            'timestamp': time.time()
-        }
-        
-        future = publisher.publish(topic_path, json.dumps(message).encode('utf-8'))
-        return future.result()
-```
-
-**Micro-batch Configuration Matrix:**
-| Event Type | Batch Size | Time Window | Processing Priority | Destination |
-|------------|------------|-------------|-------------------|-------------|
-| User Purchase | 100 | 10ms | Critical | Spanner → API |
-| Recommendations | 500 | 100ms | High | BigTable → ML |
-| Page Views | 1000 | 1000ms | Medium | BigQuery |
-| Background Sync | 5000 | 60s | Low | Iceberg |
-
-### BigTable Real-time Serving Layer
-
-**Configuration for 10M QPS:**
-- **Cluster Size**: 10 nodes with SSD storage
-- **Replication**: 3x across zones for 99.99% availability
-- **Row Key Design**: `user_id#reverse_timestamp` for efficient range scans
-- **Caching Strategy**: 1-hour TTL for recommendation scores
-
-**Integration with ML Serving:**
-```python
-# Batch write predictions from Databricks/Vertex AI to BigTable
-from google.cloud import bigtable
-from datetime import datetime
-
-def write_recommendations_to_bigtable(user_recommendations):
-    client = bigtable.Client(project='bereal-analytics')
-    instance = client.instance('bereal-serving')
-    table = instance.table('user_recommendations')
-    
-    timestamp = datetime.utcnow()
-    column_family_id = 'recommendations'
-    
-    rows = []
-    for user_id, recs in user_recommendations.items():
-        row_key = f"{user_id}#{int(timestamp.timestamp())}"
-        row = table.direct_row(row_key)
-        
-        # Store top 100 recommendations
-        for i, (item_id, score) in enumerate(recs[:100]):
-            row.set_cell(
-                column_family_id,
-                f'item_{i}',
-                f'{item_id}:{score}'.encode('utf-8'),
-                timestamp=timestamp
-            )
-        rows.append(row)
-    
-    # Batch write for efficiency
-    table.mutate_rows(rows)
-```
-
-## Scaling Strategy for 10TB Daily
-
-### Horizontal Scaling Components
-- **Dataflow**: Auto-scales to 1000 workers processing 200GB/hour each
-- **BigQuery**: Automatic slot allocation with 10,000 slots for batch processing
-- **DBT Cloud**: 20 parallel job executions across transformation DAGs
-- **Vertex AI**: Distributed training on 100-node Dataproc clusters
-
-### Vertical Optimization
-- **Columnar Compression**: Parquet format reduces storage by 70%
-- **Partition Pruning**: Date partitioning eliminates 95% of data scans
-- **Materialized Views**: Pre-aggregate common metrics for 100x query speedup
-
-## Security, GDPR, and Compliance
-
-### Data Anonymization Pipeline
-```mermaid
-graph LR
-    RE[Raw Events] --> DLP[Cloud DLP API]
-    DLP --> KA[K-Anonymity Check]
-    KA --> DP[Differential Privacy]
-    DP --> AE[Anonymized Events]
-    AE --> BQ[BigQuery]
-    
-    subgraph "GDPR Controls"
-        RT[Retention Policies]
-        RTF[Right to Forget]
-        CM[Consent Management]
-    end
-    
-    RT --> BQ
-    RTF --> BQ
-    CM --> RE
-```
-
-### IAM Configuration
-```hcl
-# Data Engineer Role
-resource "google_project_iam_custom_role" "data_engineer" {
-  role_id     = "dataEngineer"
-  title       = "Data Engineer"
-  permissions = [
-    "bigquery.datasets.create",
-    "bigquery.tables.create",
-    "dataflow.jobs.create",
-    "storage.buckets.create"
-  ]
-}
-
-# Data Scientist Role  
-resource "google_project_iam_custom_role" "data_scientist" {
-  role_id     = "dataScientist"
-  title       = "Data Scientist"
-  permissions = [
-    "bigquery.data.viewer",
-    "ml.models.create",
-    "notebooks.instances.use"
-  ]
-}
-```
-
-## Monitoring and Alerting Strategy
-
-### SLO Definitions
-- **Data Freshness**: 95% of events processed within 2 hours
-- **Pipeline Success Rate**: 99.9% of daily jobs complete successfully
-- **Data Quality**: 99.95% of events pass validation rules
-- **Model Performance**: Recommendation CTR maintains ±5% of baseline
-
-### Monitoring Architecture
-```yaml
-# Cloud Monitoring Configuration
-alerts:
-  - name: pipeline_failure
-    condition: dataflow.job.failed > 0
-    severity: CRITICAL
-    notification: pagerduty
-    
-  - name: data_freshness_slo
-    condition: bigquery.table.staleness > 7200
-    severity: WARNING
-    notification: slack
-    
-  - name: cost_anomaly
-    condition: billing.cost.daily > 1000
-    severity: INFO
-    notification: email
-```
-
-## Cost Analysis and Optimization
-
-### Core Solution Cost Breakdown (10TB/day)
-**Required Components:**
-- **BigQuery Native Storage**: $4,608 (marts layer, with compression)
-- **Iceberg Storage (GCS)**: $3,072 (staging layer)
-- **BigQuery Compute**: $300 (native table queries)
-- **BigTable**: $1,597 (3-node cluster for ML serving)
-- **Dataflow Processing**: $1,844 (with preemptible instances)
-- **Pub/Sub**: $12,000 (1B messages/day at $40/million)
-- **Vertex AI**: $2,000 (training and serving)
-- **DBT Cloud**: $2,000 (20 seats)
-- **Looker**: $5,000 (50 users)
-
-**Core Solution Total: $32,421/month**
-
-### Optional Components (Not Required for PoC)
-- **Cloud Spanner**: $2,925 (3 nodes minimum, can use BigTable + BigQuery instead)
-- **ClickHouse (GKE)**: $800 (can use BigQuery BI Engine instead)
-- **Databricks**: $3,500 (development only, not for production)
-
-**Full Solution Total: $39,646/month**
-
-### Cost Justification for 10TB Daily Processing
-
-**Data Volume Calculations:**
-- Daily Events: 1 billion (10TB raw → 3TB compressed in Iceberg)
-- Users: 10 million DAU
-- Storage Growth: 300TB/month raw, 90TB/month compressed
-- Query Volume: 100M daily queries across all services
-
-**Why Our Architecture is Cost-Effective:**
-1. **Batch Processing**: 60% cheaper than streaming for 10TB/day
-2. **Hybrid Storage**: Iceberg for raw data saves $2,000/month vs all-native BigQuery
-3. **Query Optimization**: Native BigQuery tables reduce compute by 75%
-4. **Smart Tiering**: Hot data in BigTable, warm in BigQuery, cold in GCS
-
-### Phased Implementation for Cost Control
-
-**Phase 1: Core MVP ($25,000/month)**
-- BigQuery + Iceberg hybrid storage
-- Basic Dataflow pipeline
-- Vertex AI for simple models
-- BigTable for serving
-- No Spanner, ClickHouse, or Databricks
-
-**Phase 2: Enhanced Analytics ($32,421/month)**
-- Add DBT Cloud for transformations
-- Implement Looker dashboards
-- Scale Vertex AI training
-- Optimize with materialized views
-
-**Phase 3: Optional Enhancements ($39,646/month)**
-- Add Spanner only if ACID transactions become critical
-- Deploy ClickHouse only for complex internal dashboards
-- Use Databricks only for R&D, not production
-
-**Cost Optimization Strategies:**
-1. **Immediate Savings**:
-   - Use BigQuery BI Engine instead of ClickHouse (save $800/month)
-   - Replace Spanner with BigTable + BigQuery (save $2,925/month)
-   - Limit Databricks to development (save $2,500/month on production)
-
-2. **Long-term Optimization**:
-   - Move to BigQuery flat-rate pricing at scale
-   - Implement intelligent data lifecycle (90-day retention)
-   - Use preemptible instances for all batch processing
-
-**Projected Optimized Cost: $26,000/month** (20% reduction from core solution)
-
-## Infrastructure as Code
-
-### Terraform Structure
-```
-terraform/
-├── modules/
-│   ├── bigquery/
-│   ├── dataflow/
-│   ├── vertex-ai/
-│   └── monitoring/
-├── environments/
-│   ├── dev/
-│   ├── staging/
-│   └── prod/
-└── main.tf
-```
-
-### CI/CD Pipeline
-```yaml
-# .gitlab-ci.yml
-stages:
-  - validate
-  - plan
-  - apply
-
-terraform-validate:
-  stage: validate
-  script:
-    - terraform fmt -check
-    - terraform validate
-
-terraform-plan:
-  stage: plan
-  script:
-    - terraform plan -out=tfplan
-
-terraform-apply:
-  stage: apply
-  script:
-    - terraform apply tfplan
-  only:
-    - main
-```
-
-## Implementation Timeline
-
-### Phase 1: Foundation (Weeks 1-4)
-- Deploy core GCP infrastructure (Pub/Sub, Cloud Storage, BigQuery)
-- Implement mobile SDK with intelligent batching logic
-- Set up Iceberg staging layer and native BigQuery analytics layer
-- Configure Cloud Spanner for user profile management
-- Establish basic monitoring and alerting
-
-### Phase 2: Data Pipeline & Modeling (Weeks 5-8)
-- Configure Dataflow batch processing with micro-batching
-- Implement Kimball dimensional model in BigQuery
-  - Design fact tables (user engagement, sessions, recommendations)
-  - Create conformed dimensions (users, content, date, location)
-  - Implement SCD Type 2 for user dimensions
-- Deploy DBT with dual-engine support (Spark + BigQuery)
-- Set up Data Catalog with GDPR policy tags
-- Implement data quality validation framework
-
-### Phase 3: ML Platform (Weeks 9-12)
-- Deploy Databricks workspace for feature engineering
-- Configure Vertex AI infrastructure for model training
-- Implement MLflow for model registry
-- Set up Feature Store with BigTable backend
-- Deploy recommendation engine with A/B testing
-- Configure ClickHouse for real-time analytics
-
-### Phase 4: Analytics & Optimization (Weeks 13-16)
-- Deploy Looker with Kimball semantic layer
-- Implement backend services with <10ms SLA
-- Optimize query performance (partitioning, clustering, materialized views)
-- Complete security hardening and GDPR compliance
-- Conduct load testing for 10TB daily volume
-- Implement cost optimization strategies
-
-## Conclusion
-
-This comprehensive architecture delivers a coherent, end-to-end solution for BeReal's mobile analytics platform that seamlessly flows from SDK collection through to analytics exposure. By implementing Kimball dimensional modeling principles, we ensure consistent, business-friendly analytics across all consumption layers.
-
-The hybrid storage strategy leverages the best of each technology:
-- **Apache Iceberg** for staging provides schema flexibility and multi-engine access
-- **Native BigQuery** tables deliver 38-81x faster query performance for production analytics
-- **Cloud Spanner** ensures transactional consistency with <5ms latency for user data
-- **ClickHouse** provides cost-effective pre-aggregated analytics when developing custom dashboards
-
-The dual ML platform approach (optional Databricks for complex feature engineering, Vertex AI for production serving) optimizes for both data scientist productivity and operational efficiency, while the micro-batching strategy balances real-time requirements with batch processing economics.
-
-Key achievements:
-- **Coherent Architecture**: Clear data flow from mobile SDK → ingestion → storage → processing → exposure
-- **Performance**: Sub-10ms API responses through Spanner, 38-81x faster analytics queries
-- **Flexibility**: Iceberg staging enables schema evolution and multi-engine processing
-- **Cost Efficiency**: 29% cost reduction while adding real-time capabilities
-- **Scalability**: Processes 10TB daily with elastic scaling to 100TB
-- **Data Governance**: Kimball methodology ensures consistent, auditable analytics
-- **Data Governance**: Kimball methodology ensures consistent, auditable analytics

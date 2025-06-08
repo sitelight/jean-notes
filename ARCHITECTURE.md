@@ -2604,9 +2604,8 @@ def recommendation_pipeline():
 ```
 
 **When to Consider Adding Databricks (After 12+ Months):**
-- Team has 10+ data scientists needing collaborative notebooks
-- Complex graph algorithms requiring GraphX
-- Need for Delta Lake features not available in Iceberg
+- Team has 10+ data scientists needing collaborative notebook
+- Data scientists would prefer to collaborate a bit more on notebooks (the Databricks UI is a bit more friendlty)
 - Budget allows for $10K+ monthly development environment
 
 ### Data Migration Pipeline: Iceberg to Native BigQuery

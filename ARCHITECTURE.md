@@ -11,30 +11,30 @@ The solution provides a coherent flow from mobile SDK through to analytics and M
 ```mermaid
 graph LR
     subgraph "1. Collection"
-        SDK[Mobile SDK<br/>Batching Logic]
+        SDK[Mobile SDK - Batching Logic]
     end
     
     subgraph "2. Ingestion"
-        PS[Pub/Sub<br/>Message Queue]
-        CS[Cloud Storage<br/>Raw Landing]
+        PS[Pub/Sub - Message Queue]
+        CS[Cloud Storage - Raw Landing]
     end
     
     subgraph "3. Storage"
-        ICE[Iceberg<br/>Staging Layer]
-        BQ[BigQuery<br/>Analytics DWH]
-        SP[Spanner<br/>Transactional]
+        ICE[Iceberg - Staging Layer]
+        BQ[BigQuery - Analytics DWH]
+        SP[Spanner - Transactional]
     end
     
     subgraph "4. Processing"
-        DF[Dataflow<br/>ETL]
-        DBT[DBT<br/>Transformations]
-        DB[Databricks<br/>ML Features]
+        DF[Dataflow - ETL]
+        DBT[DBT - Transformations]
+        DB[Databricks - ML Features]
     end
     
     subgraph "5. Exposure"
-        LOOK[Looker<br/>BI]
-        API[APIs<br/>Real-time]
-        ML[ML Serving<br/>Recommendations]
+        LOOK[Looker - BI]
+        API[APIs - Real-time]
+        ML[ML Serving - Recommendations]
     end
     
     SDK -->|Micro-batches| PS

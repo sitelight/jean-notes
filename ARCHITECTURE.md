@@ -9,41 +9,61 @@ This document presents a production-ready data architecture design for BeReal's 
 This comprehensive architecture document covers the following key areas:
 
 **Core Architecture & Design Principles:**
-- End-to-End Data Flow Architecture
-- Architecture Overview  
-- Why Batch Architecture Over Streaming
+- [End-to-End Data Flow Architecture](#end-to-end-data-flow-architecture)
+- [Architecture Overview](#architecture-overview)
+- [Why Batch Architecture Over Streaming](#why-batch-architecture-over-streaming)
+  - [Technical Justification with Data Volume Analysis](#technical-justification-with-data-volume-analysis)
+  - [Mobile-Specific Architecture Decisions](#mobile-specific-architecture-decisions)
+  - [Analytical Complexity Justification](#analytical-complexity-justification)
 
 **Data Pipeline Components:**
-- Detailed Component Design
-- Data Ingestion Pipeline
-- Why BigQuery as the Core Analytics Engine
-- Hybrid Storage Strategy: Iceberg + Native BigQuery
-- Data Formats and Storage Optimization: Why Iceberg Over Raw Parquet
+- [Detailed Component Design](#detailed-component-design)
+  - [Data Ingestion Pipeline](#data-ingestion-pipeline)
+  - [Why BigQuery as the Core Analytics Engine](#why-bigquery-as-the-core-analytics-engine)
+  - [Hybrid Storage Strategy: Iceberg + Native BigQuery](#hybrid-storage-strategy-iceberg--native-bigquery)
+  - [Data Modeling with Kimball Methodology](#data-modeling-with-kimball-methodology)
+  - [Data Quality Framework](#data-quality-framework)
 
-**Data Modeling & Quality:**
-- Data Modeling with Kimball Methodology
-- Data Quality Framework
-- GA4 to BigQuery Migration for Historical Backfill
+**Storage & Data Formats:**
+- [Data Formats and Storage Optimization: Why Iceberg Over Raw Parquet](#data-formats-and-storage-optimization-why-iceberg-over-raw-parquet)
+- [GA4 to BigQuery Migration for Historical Backfill](#ga4-to-bigquery-migration-for-historical-backfill)
+- [BigQuery Native Table Optimization](#bigquery-native-table-optimization)
 
 **Processing & Transformation:**
-- DBT Core Implementation (Cost-Effective Alternative)
-- Why Include Dataproc in Core Solution
-- Dataflow vs Dataproc: Choosing the Right Processing Engine
-- Orchestration Strategy for Batch Workflows
+- [Why Include Dataproc in Core Solution](#why-include-dataproc-in-core-solution)
+- [Dataflow vs Dataproc: Choosing the Right Processing Engine](#dataflow-vs-dataproc-choosing-the-right-processing-engine)
+- [DBT Core Implementation (Cost-Effective Alternative)](#dbt-core-implementation-cost-effective-alternative)
+- [DBT Semantic Layer for BI Tools](#dbt-semantic-layer-for-bi-tools)
+- [Orchestration Strategy for Batch Workflows](#orchestration-strategy-for-batch-workflows)
 
 **ML & Analytics Infrastructure:**
-- ML Infrastructure: Vertex AI + Optional Databricks
-- Real-time Serving Layer: Spanner vs BigTable vs ClickHouse
-- BigQuery Native Table Optimization
-- DBT Semantic Layer for BI Tools
+- [ML Infrastructure: Vertex AI + Optional Databricks](#ml-infrastructure-vertex-ai--optional-databricks)
+- [Real-time Serving Layer: Spanner vs BigTable vs ClickHouse](#real-time-serving-layer-spanner-vs-bigtable-vs-clickhouse)
 
 **Operations & Management:**
-- Scaling Strategy for 10TB Daily
-- Security, GDPR, and Compliance
-- Monitoring and Alerting Strategy
-- Cost Analysis and Optimization
-- Infrastructure as Code
-- Implementation Timeline
+- [Scaling Strategy for 10TB Daily](#scaling-strategy-for-10tb-daily)
+  - [Horizontal Scaling Components](#horizontal-scaling-components)
+  - [Vertical Optimization](#vertical-optimization)
+- [Security, GDPR, and Compliance](#security-gdpr-and-compliance)
+  - [Data Anonymization Pipeline](#data-anonymization-pipeline)
+  - [IAM Configuration](#iam-configuration)
+- [Monitoring and Alerting Strategy](#monitoring-and-alerting-strategy)
+  - [SLO Definitions](#slo-definitions)
+  - [Monitoring Architecture](#monitoring-architecture)
+- [Cost Analysis and Optimization](#cost-analysis-and-optimization)
+  - [Core Solution Cost Breakdown](#core-solution-cost-breakdown-10tbday)
+  - [Alternative Architecture Comparison](#alternative-architecture-comparison)
+  - [ROI Calculation with Simplified Architecture](#roi-calculation-with-simplified-architecture)
+- [Infrastructure as Code](#infrastructure-as-code)
+  - [Terraform Structure](#terraform-structure)
+  - [CI/CD Pipeline](#cicd-pipeline)
+- [Implementation Timeline](#implementation-timeline)
+  - [Phase 1: Foundation](#phase-1-foundation-weeks-1-4)
+  - [Phase 2: Data Pipeline & Modeling](#phase-2-data-pipeline--modeling-weeks-5-8)
+  - [Phase 3: ML Platform](#phase-3-ml-platform-weeks-9-12)
+  - [Phase 4: Analytics & Optimization](#phase-4-analytics--optimization-weeks-13-16)
+
+**[Conclusion](#conclusion)**
 
 ## End-to-End Data Flow Architecture
 
